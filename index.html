@@ -336,6 +336,25 @@
             box-shadow: inset 0 2px 4px rgba(0,0,0,0.03);
         }
 
+        /* History Edit/Delete Actions Style */
+        .history-action-btns {
+            display: flex;
+            gap: 8px;
+            margin-left: 15px;
+        }
+        .btn-edit-inline {
+            background-color: #ff9800;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            border-radius: 4px;
+        }
+        .btn-delete-inline {
+            background-color: #e74c3c;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            border-radius: 4px;
+        }
+
         /* --- SAVINGS CASH COUNTER STYLES --- */
         .savings-table {
             width: 100%;
@@ -682,6 +701,8 @@
             .cell-date { font-size: 0.8rem; }
             .cell-amount { font-size: 0.75rem; }
             .calendar-header h2 { font-size: 1.1rem; }
+            .timeline-item { flex-direction: column; align-items: flex-start; gap: 10px; }
+            .history-action-btns { margin-left: 0; margin-top: 5px; }
         }
     </style>
 </head>
@@ -853,8 +874,8 @@
                     </div>
                     <input type="text" id="daily-debit-custom" placeholder="Enter custom description..." style="display: none;">
                     <div class="input-row">
-                        <button class="btn-add" onclick="addDailyDebit()">Add to Total</button>
-                        <button class="btn-reset" onclick="resetDailyDebit()">Reset All</button>
+                        <button class="btn-add" id="debit-submit-btn" onclick="addDailyDebit()">Add to Total</button>
+                        <button class="btn-reset" id="debit-cancel-btn" onclick="resetDailyDebit()">Reset All</button>
                     </div>
                 </div>
             </div>
@@ -1036,6 +1057,7 @@
     let initialAccountBalance = parseFloat(localStorage.getItem('initialAccountBalance')) || 0;
     let ledgerState = JSON.parse(localStorage.getItem('ledgerState')) || {};
     let debitHistoryState = JSON.parse(localStorage.getItem('debitHistoryState')) || [];
+    let currentEditingId = null; // Track transaction being edited
 
     sortedFriends.forEach(peer => {
         if (ledgerState[peer] === undefined) { ledgerState[peer] = { balance: 0, baseline: 0, transactions: [] }; }
@@ -1076,6 +1098,10 @@
     }
 
     function updateBalancesUI() {
+        // Recalculate personalTotalDebit dynamically from history to prevent sync issues
+        personalTotalDebit = debitHistoryState.reduce((sum, item) => sum + item.amount, 0);
+        localStorage.setItem('personalTotalDebit', personalTotalDebit);
+
         document.getElementById('initial-balance-val').textContent = initialAccountBalance.toFixed(2);
         document.getElementById('total-debit-val').textContent = personalTotalDebit.toFixed(2);
         
@@ -1084,7 +1110,8 @@
     }
 
     function resolveCategoryValue(selectId, inputId) {
-        const selectVal = document.getElementById(selectId).value;
+        const selectEl = document.getElementById(selectId);
+        const selectVal = selectEl.value;
         if (selectVal === 'Other') {
             const customVal = document.getElementById(inputId).value.trim();
             return customVal !== "" ? customVal : "Uncategorized Transaction";
@@ -1098,20 +1125,35 @@
         const categoryDesc = resolveCategoryValue('daily-debit-category', 'daily-debit-custom');
 
         if (!isNaN(amount) && amount > 0) {
-            personalTotalDebit += amount;
-            localStorage.setItem('personalTotalDebit', personalTotalDebit);
+            if (currentEditingId) {
+                // UPDATE Existing Transaction
+                const txIndex = debitHistoryState.findIndex(tx => tx.id === currentEditingId);
+                if (txIndex !== -1) {
+                    debitHistoryState[txIndex].amount = amount;
+                    debitHistoryState[txIndex].category = categoryDesc;
+                }
+                currentEditingId = null;
+                
+                // Change UI buttons back to default state
+                document.getElementById('debit-submit-btn').textContent = "Add to Total";
+                document.getElementById('debit-cancel-btn').textContent = "Reset All";
+                document.getElementById('debit-cancel-btn').setAttribute("onclick", "resetDailyDebit()");
+            } else {
+                // ADD New Transaction
+                debitHistoryState.unshift({
+                    id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+                    amount: amount,
+                    category: categoryDesc,
+                    timestamp: new Date().toISOString()
+                });
+            }
             
-            debitHistoryState.unshift({
-                id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2),
-                amount: amount,
-                category: categoryDesc,
-                timestamp: new Date().toISOString()
-            });
             localStorage.setItem('debitHistoryState', JSON.stringify(debitHistoryState));
             
             updateBalancesUI();
             renderDebitHistory();
 
+            // Clear inputs
             inputEl.value = '';
             document.getElementById('daily-debit-category').value = '';
             document.getElementById('daily-debit-custom').style.display = 'none';
@@ -1121,11 +1163,68 @@
         }
     }
 
+    function editDebitTransaction(id) {
+        const tx = debitHistoryState.find(item => item.id === id);
+        if (!tx) return;
+
+        currentEditingId = id;
+
+        // Load into inputs
+        document.getElementById('daily-debit-input').value = tx.amount;
+        
+        const categorySelect = document.getElementById('daily-debit-category');
+        const customInput = document.getElementById('daily-debit-custom');
+        
+        // Check if category exists in pre-defined dropdown choices
+        const options = Array.from(categorySelect.options).map(opt => opt.value);
+        if (options.includes(tx.category)) {
+            categorySelect.value = tx.category;
+            customInput.style.display = 'none';
+        } else {
+            categorySelect.value = 'Other';
+            customInput.style.display = 'block';
+            customInput.value = tx.category;
+        }
+
+        // Change UI button text to guide user
+        document.getElementById('debit-submit-btn').textContent = "Update Amount";
+        document.getElementById('debit-cancel-btn').textContent = "Cancel Edit";
+        document.getElementById('debit-cancel-btn').setAttribute("onclick", "cancelDebitEdit()");
+        
+        // Scroll smoothly to form setup
+        document.getElementById('daily-debit-input').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelDebitEdit() {
+        currentEditingId = null;
+        document.getElementById('daily-debit-input').value = '';
+        document.getElementById('daily-debit-category').value = '';
+        document.getElementById('daily-debit-custom').style.display = 'none';
+        document.getElementById('daily-debit-custom').value = '';
+
+        document.getElementById('debit-submit-btn').textContent = "Add to Total";
+        document.getElementById('debit-cancel-btn').textContent = "Reset All";
+        document.getElementById('debit-cancel-btn').setAttribute("onclick", "resetDailyDebit()");
+    }
+
+    function deleteDebitTransaction(id) {
+        if (confirm("Intha transaction-ai permanent-aga delete seiya venduma?")) {
+            if (currentEditingId === id) cancelDebitEdit();
+            
+            debitHistoryState = debitHistoryState.filter(item => item.id !== id);
+            localStorage.setItem('debitHistoryState', JSON.stringify(debitHistoryState));
+            
+            updateBalancesUI();
+            renderDebitHistory();
+        }
+    }
+
     function resetDailyDebit() {
         if (confirm("Moththa history matrum Spent balances reset seiya venduma?")) {
             personalTotalDebit = 0;
             initialAccountBalance = 0;
             debitHistoryState = [];
+            currentEditingId = null;
             localStorage.setItem('personalTotalDebit', personalTotalDebit);
             localStorage.setItem('initialAccountBalance', initialAccountBalance);
             localStorage.setItem('debitHistoryState', JSON.stringify(debitHistoryState));
@@ -1143,12 +1242,18 @@
             listEl.innerHTML = debitHistoryState.map(entry => {
                 const formattedDate = dateFormatter.format(new Date(entry.timestamp));
                 return `
-                    <li class="timeline-item give">
+                    <li class="timeline-item give" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
                         <div class="timeline-meta">
                             <span class="timeline-desc">${entry.category}</span>
                             <span class="timeline-date">${formattedDate}</span>
                         </div>
-                        <div class="timeline-amount">₹${entry.amount.toFixed(2)}</div>
+                        <div style="display: flex; align-items: center;">
+                            <div class="timeline-amount" style="margin-right: 15px;">₹${entry.amount.toFixed(2)}</div>
+                            <div class="history-action-btns">
+                                <button class="btn-edit-inline" onclick="editDebitTransaction('${entry.id}')">Edit</button>
+                                <button class="btn-delete-inline" onclick="deleteDebitTransaction('${entry.id}')">X</button>
+                            </div>
+                        </div>
                     </li>
                 `;
             }).join('');

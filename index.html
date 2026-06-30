@@ -1030,17 +1030,29 @@
         if(pageId === 'analytics-page') renderAnalyticsChart();
     }
 
-    async function attemptLogin() {
-        const userIn = document.getElementById('username').value.trim();
-        const passIn = document.getElementById('password').value.trim();
-        const errorEl = document.getElementById('login-error-msg');
+// Locate and replace your authentication logic with this updated check:
+function attemptLogin() {
+    const userField = document.getElementById('username').value.trim();
+    const passField = document.getElementById('password').value.trim();
+    const errorEl = document.getElementById('login-error-msg');
+
+    // Setting user validation logic with password '0805'
+    if (userField === "0805" && passField === "0805") {
+        currentLoggedInUser = userField;
         errorEl.textContent = "";
-
-        if(!userIn || !passIn) {
-            errorEl.textContent = "Please fill in all security input fields.";
-            return;
-        }
-
+        
+        // Hide login view, show dashboard panels
+        document.getElementById('login-page').style.display = 'none';
+        document.getElementById('menu-page').style.display = 'flex';
+        document.getElementById('display-username').textContent = currentLoggedInUser;
+        
+        // Initialize dashboards
+        loadSavingsData();
+        updateBalancesUI();
+    } else {
+        errorEl.textContent = "Invalid username or password credentials.";
+    }
+}
         if(CREDENTIALS_STORE[userIn]) {
             const hashedInputPass = await sha256(passIn);
             if(hashedInputPass === CREDENTIALS_STORE[userIn]) {
